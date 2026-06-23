@@ -1,0 +1,45 @@
+name: Trigger auto deployment for watermelon-api
+
+# When this action will be executed
+on:
+  # Automatically trigger it when detected changes in repo
+  push:
+    branches: 
+      [ main ]
+    paths:
+    - '**'
+    - '.github/workflows/watermelon-api-AutoDeployTrigger-01d5f7fa-37e6-4c13-b195-1aed13314306.yml'
+
+  # Allow manual trigger 
+  workflow_dispatch:
+      
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout to the branch
+        uses: actions/checkout@v2
+
+      - name: Azure Login
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.WATERMELONAPI_AZURE_CREDENTIALS }}
+
+      - name: Build and push container image to registry
+        uses: azure/container-apps-deploy-action@v2
+        with:
+          appSourcePath: ${{ github.workspace }}
+          _dockerfilePathKey_: _dockerfilePath_
+          _targetLabelKey_: _targetLabel_
+          registryUrl: watermelonacr.azurecr.io
+          registryUsername: ${{ secrets.WATERMELONAPI_REGISTRY_USERNAME }}
+          registryPassword: ${{ secrets.WATERMELONAPI_REGISTRY_PASSWORD }}
+          containerAppName: watermelon-api
+          resourceGroup: project-1st-team-6
+          imageToBuild: watermelonacr.azurecr.io/watermelon-api:${{ github.sha }}
+          
+            
+
+     
+
