@@ -1,0 +1,13 @@
+.git
+.gitignore
+.env
+.venv
+venv
+__pycache__
+*.pyc
+*.pyo
+*.egg-info
+tests
+.pytest_cache
+.ruff_cache
+watermelon_dataset_targets.csv

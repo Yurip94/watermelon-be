@@ -1,0 +1,25 @@
+# Secrets
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+
+# Virtualenvs
+.venv/
+venv/
+
+# Data / artifacts (배포 시 Blob에서 받음)
+*.csv
+predictions_*.csv
+
+# IDE / OS
+.idea/
+.vscode/
+.DS_Store
