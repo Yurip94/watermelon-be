@@ -1,8 +1,12 @@
 from datetime import date
 from functools import lru_cache
+from pathlib import Path
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# 레포 루트: src/app/core/config.py -> parents[3] == repo root (컨테이너에선 /app)
+PROJECT_ROOT = Path(__file__).resolve().parents[3]
 
 
 class Settings(BaseSettings):
@@ -30,11 +34,35 @@ class Settings(BaseSettings):
     prediction_cron_minute: int = 0
     prediction_timezone: str = "Asia/Seoul"
 
+    # === 데이터 수집 파이프라인 (도매가/반입량/유가/CPI/기상) ===
+    kosis_api_key: str = ""
+    kosis_user_id: str = ""
+    opinet_api_key: str = ""
+    opinet_backfill_start: str = "20200101"
+    # 가락시장 공공데이터: 반입량(data22) / 단위별 도매가(data36)
+    garak_api_id: str = ""
+    garak_api_passwd: str = ""
+    garak_price_id: str = ""
+    garak_price_passwd: str = ""
+    # 도매가 물가보정 기준 CPI. 0이면 수집된 CPI 중 최신 발표월 자동 사용.
+    cpi_base: float = 0.0
+    # 마스터/중간산출물 디렉터리 (컨테이너 ephemeral, Blob에서 받아옴)
+    data_dir: Path = PROJECT_ROOT / "data"
+    # 데이터 수집 스케줄(로컬 scheduler.py용; 예측 3시 전에 끝나도록 2시 기본)
+    scheduler_timezone: str = "Asia/Seoul"
+    scheduler_hour: int = 2
+    scheduler_minute: int = 0
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
         extra="ignore",
     )
+
+
+    @property
+    def master_dataset_path(self) -> Path:
+        return self.data_dir / "watermelon_dataset_targets.csv"
 
 
 @lru_cache
