@@ -22,10 +22,27 @@ def _today() -> date:
 @router.get("", response_model=ForecastResponse)
 def get_forecast(db: DatabaseSession) -> ForecastResponse:
     today = _today()
+    yesterday_date = today - timedelta(days=1)
+    tomorrow_date = today + timedelta(days=1)
+
+    latest_base = db.execute(
+        select(PricePrediction.base_date)
+        .where(PricePrediction.target_date >= today)
+        .order_by(PricePrediction.base_date.desc())
+        .limit(1)
+    ).scalar_one_or_none()
+    if latest_base is None:
+        raise HTTPException(
+            status_code=503,
+            detail="forecast not ready: no predictions available",
+        )
 
     rows = db.execute(
         select(PricePrediction)
-        .where(PricePrediction.target_date >= today)
+        .where(
+            PricePrediction.base_date == latest_base,
+            PricePrediction.target_date >= today,
+        )
         .order_by(PricePrediction.target_date.asc())
         .limit(7)
     ).scalars().all()
@@ -40,30 +57,45 @@ def get_forecast(db: DatabaseSession) -> ForecastResponse:
         DatedPrice(date=r.target_date, price=int(round(float(r.predicted_price))))
         for r in rows
     ]
-    base_date = rows[0].base_date  # 일반적으로 today - 1
+    by_date = {f.date: f for f in forecast}
 
-    yesterday_date = today - timedelta(days=1)
+    if today not in by_date or tomorrow_date not in by_date:
+        raise HTTPException(
+            status_code=503,
+            detail="forecast not ready: missing today/tomorrow prediction",
+        )
+
     actual = db.execute(
         select(ActualPrice).where(ActualPrice.date == yesterday_date)
     ).scalar_one_or_none()
-    if actual is None:
-        actual = db.execute(
-            select(ActualPrice).order_by(ActualPrice.date.desc()).limit(1)
+    if actual is not None:
+        yesterday = DatedPrice(
+            date=actual.date,
+            price=int(round(float(actual.actual_price))),
+        )
+    else:
+        yesterday_pred = db.execute(
+            select(PricePrediction)
+            .where(PricePrediction.target_date == yesterday_date)
+            .order_by(PricePrediction.base_date.desc())
+            .limit(1)
         ).scalar_one_or_none()
-    if actual is None:
-        raise HTTPException(status_code=503, detail="actual price unavailable")
-
-    yesterday = DatedPrice(
-        date=actual.date,
-        price=int(round(float(actual.actual_price))),
-    )
+        if yesterday_pred is None:
+            raise HTTPException(
+                status_code=503,
+                detail="yesterday price unavailable",
+            )
+        yesterday = DatedPrice(
+            date=yesterday_date,
+            price=int(round(float(yesterday_pred.predicted_price))),
+        )
 
     return ForecastResponse(
-        base_date=base_date,
+        base_date=today,
         summary_prices=SummaryPrices(
             yesterday=yesterday,
-            today=forecast[0],
-            tomorrow=forecast[1],
+            today=by_date[today],
+            tomorrow=by_date[tomorrow_date],
         ),
         forecast=forecast,
     )
