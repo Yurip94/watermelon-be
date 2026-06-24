@@ -1,11 +1,14 @@
+import time
 from datetime import date, datetime, timedelta
 from typing import Annotated
+from uuid import uuid4
 from zoneinfo import ZoneInfo
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, Response
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.core.audit import audit_logger, get_client_ip
 from app.core.config import settings
 from app.db.models import ActualPrice, PricePrediction
 from app.db.session import get_db
@@ -20,7 +23,52 @@ def _today() -> date:
 
 
 @router.get("", response_model=ForecastResponse)
-def get_forecast(db: DatabaseSession) -> ForecastResponse:
+def get_forecast(
+    request: Request,
+    response: Response,
+    background_tasks: BackgroundTasks,
+    db: DatabaseSession,
+) -> ForecastResponse:
+    request_id = uuid4().hex
+    response.headers["X-Request-ID"] = request_id
+    start = time.perf_counter()
+    status_code = 200
+    response_summary: dict | None = None
+    try:
+        result = _build_forecast(db)
+        response_summary = {
+            "base_date": result.base_date.isoformat(),
+            "forecast": [
+                {"date": f.date.isoformat(), "price": f.price}
+                for f in result.forecast
+            ],
+        }
+        return result
+    except HTTPException as exc:
+        status_code = exc.status_code
+        response_summary = {"detail": exc.detail}
+        raise
+    except Exception:
+        status_code = 500
+        raise
+    finally:
+        latency_ms = int((time.perf_counter() - start) * 1000)
+        background_tasks.add_task(
+            audit_logger.log_event,
+            {
+                "request_id": request_id,
+                "client_ip": get_client_ip(request),
+                "user_agent": request.headers.get("user-agent", ""),
+                "method": request.method,
+                "path": request.url.path,
+                "status_code": status_code,
+                "latency_ms": latency_ms,
+                "response_summary": response_summary,
+            },
+        )
+
+
+def _build_forecast(db: Session) -> ForecastResponse:
     today = _today()
     yesterday_date = today - timedelta(days=1)
     tomorrow_date = today + timedelta(days=1)

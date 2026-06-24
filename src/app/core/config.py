@@ -27,6 +27,8 @@ class Settings(BaseSettings):
     blob_dataset_blob: str = "watermelon_dataset_targets.csv"
     # 원본가+CPI sidecar (마스터 밖에서 관리)
     blob_sidecar_blob: str = "price_raw.csv"
+    # /price 호출 감사 로그(JSONL, 일별 회전) prefix — 컨테이너는 위와 동일
+    blob_audit_prefix: str = "audit/prices"
 
     # 이미지에 동봉되는 모델 아티팩트 경로
     model_artifact_path: str = "/app/src/app/model/ridge_production.joblib"
