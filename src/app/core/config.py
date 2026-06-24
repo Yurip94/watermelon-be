@@ -25,6 +25,8 @@ class Settings(BaseSettings):
     blob_storage_access_key: str = ""
     blob_container_name: str = "data"
     blob_dataset_blob: str = "watermelon_dataset_targets.csv"
+    # 원본가+CPI sidecar (마스터 밖에서 관리)
+    blob_sidecar_blob: str = "price_raw.csv"
 
     # 이미지에 동봉되는 모델 아티팩트 경로
     model_artifact_path: str = "/app/src/app/model/ridge_production.joblib"

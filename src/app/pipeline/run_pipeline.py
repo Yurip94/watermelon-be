@@ -1,15 +1,16 @@
 """
-전체 데이터 파이프라인 실행기.
+매일 데이터 파이프라인 실행기 (CPI 미갱신).
 
 실행 순서:
-  0. Blob에서 마스터 다운로드 (컨테이너 ephemeral 대비)
+  0. Blob에서 마스터 + sidecar 다운로드 (컨테이너 ephemeral 대비)
   1. 오피넷 유가 수집 (증분)
-  2. KOSIS CPI 수집 (전체 월별)
-  3. 가락 수박 도매가 수집 (data36, 증분)
-  4. 가락 수박 반입량 수집 (data22, 증분)
-  5. 기상청 ASOS 날씨 수집 (증분)
-  6. 피처 병합 → 마스터 데이터셋 갱신
-  7. Blob 업로드 (예측 모델이 읽는 위치)
+  2. 가락 수박 도매가 수집 (data36, 증분)
+  3. 가락 수박 반입량 수집 (data22, 증분)
+  4. 기상청 ASOS 날씨 수집 (증분)
+  5. 피처 병합 → 마스터 갱신 (sidecar 기존 CPI 사용, 과거 불변)
+  6. Blob 업로드 (마스터 + sidecar)
+
+※ CPI 갱신 + 전체 물가보정 재환산은 월간 스크립트 update_cpi.py에서 수행.
 """
 
 from __future__ import annotations
@@ -32,17 +33,18 @@ def _step(name: str) -> None:
 
 
 def run_download_master() -> bool:
-    _step("0/7  Blob에서 마스터 다운로드")
+    _step("0/6  Blob에서 마스터 + sidecar 다운로드")
     try:
         if not _blob_creds():
-            print("[스킵] Blob 인증 정보 미설정 — 로컬 마스터 사용.")
+            print("[스킵] Blob 인증 정보 미설정 — 로컬 파일 사용.")
             return True
-        from app.pipeline.upload_to_blob import download_master
+        from app.pipeline.upload_to_blob import download_master, download_sidecar
 
         download_master()
+        download_sidecar()
         return True
     except Exception:
-        print("[오류] 마스터 다운로드 실패:")
+        print("[오류] 다운로드 실패:")
         traceback.print_exc()
         return False
 
@@ -74,23 +76,8 @@ def run_collect_oil() -> bool:
         return False
 
 
-def run_collect_cpi() -> bool:
-    _step("2/7  CPI 수집 (KOSIS)")
-    try:
-        from app.pipeline.collect_cpi import fetch_cpi_data, save_to_csv
-
-        current_month = date.today().strftime("%Y%m")
-        records = fetch_cpi_data("202001", current_month)
-        save_to_csv(records, str(settings.data_dir / "temp_cpi.csv"))
-        return True
-    except Exception:
-        print("[오류] CPI 수집 실패:")
-        traceback.print_exc()
-        return False
-
-
 def run_collect_price() -> bool:
-    _step("3/7  수박 도매가 수집 (가락 data36, 증분)")
+    _step("2/6  수박 도매가 수집 (가락 data36, 증분)")
     try:
         from app.pipeline.collect_price import (
             fetch_price_dataframe,
@@ -119,7 +106,7 @@ def run_collect_price() -> bool:
 
 
 def run_collect_volume() -> bool:
-    _step("4/7  수박 반입량 수집 (가락 data22, 증분)")
+    _step("3/6  수박 반입량 수집 (가락 data22, 증분)")
     try:
         from app.pipeline.collect_volume import (
             fetch_volume_dataframe,
@@ -148,7 +135,7 @@ def run_collect_volume() -> bool:
 
 
 def run_collect_weather() -> bool:
-    _step("5/7  기상 수집 (KMA ASOS, 증분)")
+    _step("4/6  기상 수집 (KMA ASOS, 증분)")
     try:
         from app.pipeline.collect_weather import (
             fetch_weather_dataframe,
@@ -177,18 +164,21 @@ def run_collect_weather() -> bool:
 
 
 def run_merge() -> bool:
-    _step("6/7  피처 병합 → 마스터 데이터셋 갱신")
+    _step("5/6  피처 병합 → 마스터 데이터셋 갱신 (CPI 미갱신)")
     try:
         from app.pipeline.merge_all_features import merge_features
 
+        # 매일은 CPI를 갱신하지 않음(refresh_cpi=False) → sidecar의 기존 cpi 사용,
+        # 과거 wholesale 불변. CPI 재환산은 월간 update_cpi에서.
         merge_features(
             target_path=str(settings.master_dataset_path),
             temp_oil_path=str(settings.data_dir / "temp_oil.csv"),
-            temp_cpi_path=str(settings.data_dir / "temp_cpi.csv"),
+            temp_cpi_path=None,
             temp_price_path=str(settings.data_dir / "temp_price.csv"),
             temp_volume_path=str(settings.data_dir / "temp_volume.csv"),
             temp_weather_path=str(settings.data_dir / "temp_weather.csv"),
             price_raw_path=str(settings.data_dir / "price_raw.csv"),
+            refresh_cpi=False,
         )
         return True
     except Exception:
@@ -198,15 +188,19 @@ def run_merge() -> bool:
 
 
 def run_upload() -> bool:
-    _step("7/7  Azure Blob Storage 업로드")
+    _step("6/6  Azure Blob 업로드 (마스터 + sidecar)")
     try:
         if not _blob_creds():
             print("[스킵] Blob 인증 정보 미설정. 업로드를 건너뜁니다.")
             return True
 
-        from app.pipeline.upload_to_blob import upload_master_dataset
+        from app.pipeline.upload_to_blob import (
+            upload_master_dataset,
+            upload_sidecar,
+        )
 
         blob_path = upload_master_dataset()
+        upload_sidecar()
         print(f"업로드 성공: {blob_path}")
         return True
     except Exception:
@@ -222,7 +216,6 @@ def main() -> int:
     steps = [
         run_download_master,
         run_collect_oil,
-        run_collect_cpi,
         run_collect_price,
         run_collect_volume,
         run_collect_weather,

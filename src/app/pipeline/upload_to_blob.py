@@ -50,6 +50,40 @@ def download_master(local_path: Path | None = None) -> bool:
     return True
 
 
+def download_sidecar(local_path: Path | None = None) -> bool:
+    """Blob의 원본가+CPI sidecar(price_raw.csv)를 로컬로 다운로드."""
+    dst = local_path or (settings.data_dir / "price_raw.csv")
+    client = _service_client()
+    blob = client.get_blob_client(
+        container=settings.blob_container_name,
+        blob=settings.blob_sidecar_blob,
+    )
+    if not blob.exists():
+        print(f"[정보] Blob에 sidecar 없음 ({settings.blob_sidecar_blob})")
+        return False
+
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    with dst.open("wb") as f:
+        f.write(blob.download_blob().readall())
+    print(f"다운로드 완료: {settings.blob_container_name}/{settings.blob_sidecar_blob}")
+    return True
+
+
+def upload_sidecar(local_path: Path | None = None) -> None:
+    """원본가+CPI sidecar를 Blob에 업로드."""
+    src = local_path or (settings.data_dir / "price_raw.csv")
+    if not src.exists():
+        return
+    client = _service_client()
+    container = client.get_container_client(settings.blob_container_name)
+    if not container.exists():
+        container.create_container()
+    container.get_blob_client(settings.blob_sidecar_blob).upload_blob(
+        src.read_bytes(), overwrite=True
+    )
+    print(f"업로드 완료: {settings.blob_container_name}/{settings.blob_sidecar_blob}")
+
+
 def upload_master_dataset(local_path: Path | None = None) -> str:
     """마스터를 Blob에 업로드. 예측이 읽는 최신본 + 날짜별 스냅샷."""
     src = local_path or settings.master_dataset_path
