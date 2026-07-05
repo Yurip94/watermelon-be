@@ -1,77 +1,59 @@
-# watermelon-backend
+# 수박의정석 — Backend
 
-FastAPI backend for the watermelon project.
+수박 도매가 7일치를 예측하고 사진으로 품질을 분석하는 데이터 AI 서비스의 백엔드입니다.
+기상·유가·물가(CPI)·도매가·반입량 등 공공 API 5종을 매일 자동 수집·병합해 학습용
+마스터 데이터를 만들고, FastAPI로 예측 결과를 서빙합니다.
 
-## Project Structure
+> 팀 프로젝트 (SeSAC · 6인) · 2026.06 · [프로젝트 상세 페이지](https://yurip94.github.io/watermelon.html)
+
+## 아키텍처
 
 ```text
-watermelon-backend/
-├── src/
-│   └── app/
-│       ├── api/
-│       │   └── v1/
-│       │       ├── endpoints/
-│       │       │   ├── database.py
-│       │       │   ├── health.py
-│       │       │   └── prices.py
-│       │       └── router.py
-│       ├── core/
-│       │   └── config.py
-│       ├── db/
-│       │   ├── base.py
-│       │   └── session.py
-│       ├── schema/
-│       │   ├── health.py
-│       │   └── price.py
-│       └── main.py
-├── tests/
-│   └── test_health.py
-├── .env.example
-└── pyproject.toml
+공공 API 5종 (기상청·오피넷·KOSIS·가락시장 data36/data22)
+  → 수집·전처리 파이프라인 (매일 02:00)
+  → Blob Storage (master + CPI sidecar)
+  → Ridge 예측 (7일)
+  → PostgreSQL → FastAPI / 대시보드
 ```
 
-## Setup
+- **CPI 사이드카**: 원본가(raw)와 CPI를 분리 보존 — 매일은 어제치만 append,
+  새 CPI 발표 시 전 구간을 실질가격으로 재환산하고 월 1회 모델 재학습으로 연결
+- **도매가 재현**: 가락시장 `data36` 출처 규명 + CPI 실질가 보정으로 마스터 데이터와
+  완전 일치(최근 12일 오차 0) — 규명 과정은
+  [docs/wholesale_price_troubleshooting.md](docs/wholesale_price_troubleshooting.md) 참고
+
+## 구성
+
+| 경로 | 역할 |
+|------|------|
+| `src/app/pipeline/` | 5종 수집기 · 병합 · 파생 피처 · Blob 업로드 · 스케줄러 |
+| `src/app/api/v1/` | FastAPI 엔드포인트 (prices, health, database) |
+| `docs/` | API 레퍼런스 · 도매가 출처 규명 트러블슈팅 |
+| `tests/` | 파이프라인 · API 테스트 |
+
+## 실행
 
 ```bash
-cd /Users/cosmic/python/ms-study/project/watermelon-backend
-python3 -m venv .venv
-source .venv/bin/activate
+python3 -m venv .venv && source .venv/bin/activate
 python -m pip install -e ".[dev]"
-cp .env.example .env
-```
-
-Edit `.env` for your local PostgreSQL:
-
-```env
-DATABASE_URL=postgresql+psycopg://postgres:postgres@localhost:5432/watermelon
-```
-
-## Run
-
-```bash
+cp .env.example .env   # DATABASE_URL 등 환경변수 설정
 uvicorn app.main:app --reload --app-dir src
 ```
 
-Open:
-
-- API root: http://127.0.0.1:8000
-- Health check: http://127.0.0.1:8000/api/v1/health
-- Database ping: http://127.0.0.1:8000/api/v1/database/ping
-- Weekly prices: http://127.0.0.1:8000/api/v1/prices?date=2026-06-22
 - Swagger UI: http://127.0.0.1:8000/docs
+- Health check: http://127.0.0.1:8000/api/v1/health
+- Weekly prices: http://127.0.0.1:8000/api/v1/prices?date=2026-06-22
 
-## Test
+로컬 PostgreSQL은 `docker compose up -d db` 로 띄울 수 있습니다
+(`watermelon` DB, `postgres`/`postgres`, `localhost:5432`).
+
+## 테스트
 
 ```bash
 pytest
 ```
 
-## Local PostgreSQL (Docker)
+## 배포
 
-```bash
-docker compose up -d db
-```
-
-This starts only PostgreSQL (`watermelon` DB, `postgres`/`postgres` credentials) on
-`localhost:5432`, matching `DATABASE_URL` in `.env.example`. The API, data pipeline,
-and dashboard live in separate repos/services and will be integrated later.
+- API: Azure Container Apps (GitHub Actions AutoDeploy)
+- 수집 잡: Azure Container Apps Job(cron) — 매일 02:00 수집·정제·Blob 적재 무인 실행
